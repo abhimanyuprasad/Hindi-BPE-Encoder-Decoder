@@ -13,21 +13,15 @@ class HindiBPE:
         self.token_to_index: Dict[str, int] = {}
         self.index_to_token: Dict[int, str] = {}
         self.UNK_TOKEN = "<UNK>"
-        self.min_freq = 2
+        self.min_freq = 1
         
     def get_stats(self, words: List[List[str]]) -> Dict[Tuple[str, str], int]:
         """Count frequency of adjacent pairs"""
         pairs = defaultdict(int)
         
         for word in words:
-            # Count pairs within each word
             for i in range(len(word) - 1):
                 pairs[tuple(word[i:i+2])] += 1
-            
-            # Also consider pairs across word boundaries for better compression
-            if len(word) > 2:
-                for i in range(1, len(word) - 2):
-                    pairs[tuple(word[i:i+3])] += 1
                 
         return pairs
     
@@ -35,6 +29,10 @@ class HindiBPE:
         """Merge all occurrences of the most frequent pair"""
         first, second = pair
         new_token = first + second
+        
+        # Skip merging if the new token is longer than 25 characters
+        if len(new_token) > 35:
+            return words
         
         new_words = []
         for word in words:
@@ -53,25 +51,12 @@ class HindiBPE:
     
     def fit(self, texts: List[str]) -> None:
         """Learn BPE merges from texts"""
-        # Preprocess texts to create larger chunks for better compression
-        processed_texts = []
-        current_chunk = []
-        chunk_size = 100  # Characters per chunk
-        
-        for text in texts:
-            current_chunk.extend(list(text))
-            if len(current_chunk) >= chunk_size:
-                processed_texts.append(''.join(current_chunk))
-                current_chunk = []
-        if current_chunk:
-            processed_texts.append(''.join(current_chunk))
-        
         # Initialize vocabulary with characters
-        words = [[char for char in text] for text in processed_texts]
-        self.vocab = set(char for text in processed_texts for char in text)
+        words = [[char for char in text] for text in texts]
+        self.vocab = set(char for text in texts for char in text)
         self.vocab.add(self.UNK_TOKEN)
         
-        # Initialize token indices
+        # Initialize token indices for characters and special tokens
         self.token_to_index = {self.UNK_TOKEN: 0}
         self.index_to_token = {0: self.UNK_TOKEN}
         
@@ -81,7 +66,6 @@ class HindiBPE:
         
         next_idx = len(self.vocab)
         
-        # Learn merges
         for i in range(self.vocab_size - len(self.vocab)):
             pairs = self.get_stats(words)
             if not pairs:
@@ -97,55 +81,50 @@ class HindiBPE:
             words = self.merge_vocab(words, best_pair)
             merged_token = ''.join(best_pair)
             
-            # Only add to vocabulary if it provides good compression
-            if len(merged_token) < len(best_pair[0]) + len(best_pair[1]):
-                self.merges[best_pair] = merged_token
-                self.reverse_merges[merged_token] = best_pair
-                self.vocab.add(merged_token)
-                self.token_to_index[merged_token] = next_idx
-                self.index_to_token[next_idx] = merged_token
-                next_idx += 1
+            # Skip adding to vocabulary if the token is longer than 5 characters
+            if len(merged_token) > 35:
+                continue
+            
+            self.merges[best_pair] = merged_token
+            self.reverse_merges[merged_token] = best_pair
+            self.vocab.add(merged_token)
+            self.token_to_index[merged_token] = next_idx
+            self.index_to_token[next_idx] = merged_token
+            next_idx += 1
     
     def encode(self, text: str) -> List[int]:
         """Encode text using learned BPE merges and return indices"""
         if not text:
             return []
         
-        # Split text into optimal chunks
-        chunks = [text[i:i+50] for i in range(0, len(text), 50)]
-        final_tokens = []
+        word = [char for char in text]
         
-        for chunk in chunks:
-            word = [char for char in chunk]
-            
-            while True:
-                pairs = [(word[i], word[i+1]) 
-                        for i in range(len(word)-1)]
-                if not pairs:
-                    break
+        while True:
+            pairs = [(word[i], word[i+1]) for i in range(len(word)-1)]
+            if not pairs:
+                break
                 
-                mergeable_pairs = [pair for pair in pairs 
-                                 if pair in self.merges]
-                if not mergeable_pairs:
-                    break
+            mergeable_pairs = [pair for pair in pairs if pair in self.merges]
+            if not mergeable_pairs:
+                break
                 
-                # Merge all possible pairs in one pass
-                i = 0
-                new_word = []
-                while i < len(word):
-                    if (i < len(word) - 1 and 
-                        (word[i], word[i+1]) in self.merges):
-                        new_word.append(self.merges[(word[i], word[i+1])])
-                        i += 2
-                    else:
-                        new_word.append(word[i])
-                        i += 1
-                word = new_word
-            
-            final_tokens.extend(word)
+            for pair in pairs:
+                if pair in self.merges:
+                    first, second = pair
+                    new_word = []
+                    i = 0
+                    while i < len(word):
+                        if i < len(word) - 1 and word[i] == first and word[i+1] == second:
+                            new_word.append(self.merges[pair])
+                            i += 2
+                        else:
+                            new_word.append(word[i])
+                            i += 1
+                    word = new_word
+                    break
         
         return [self.token_to_index.get(token, self.token_to_index[self.UNK_TOKEN]) 
-                for token in final_tokens]
+                for token in word]
     
     def decode_token(self, token: str, max_depth: int = 100) -> str:
         """Recursively decode a single token with depth limit"""
@@ -158,8 +137,7 @@ class HindiBPE:
     def decode(self, indices: List[int]) -> str:
         """Decode indices back to text"""
         try:
-            tokens = [self.index_to_token.get(idx, self.UNK_TOKEN) 
-                     for idx in indices]
+            tokens = [self.index_to_token.get(idx, self.UNK_TOKEN) for idx in indices]
             
             result = []
             for token in tokens:
@@ -176,7 +154,7 @@ class HindiBPE:
     
     def get_token_mapping(self) -> Dict[int, str]:
         """Return the mapping of indices to tokens"""
-        return self.index_to_token 
+        return self.index_to_token
     
     def save_model(self, path: str = "data/bpe_model.json"):
         """Save the BPE model's vocabulary and mappings"""

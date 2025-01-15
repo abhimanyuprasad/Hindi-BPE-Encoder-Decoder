@@ -6,17 +6,14 @@ import os
 
 def train_and_save_model():
     """Train BPE model and save it to file"""
-    # Download the corpus
     corpus_path = download_hindi_corpus()
-    
-    # Load and preprocess the data
     processed_texts = load_and_preprocess_data(corpus_path)
     
     # Initialize and train BPE
     vocab_size = 5000
     bpe = HindiBPE(vocab_size=vocab_size)
     print(f"Training BPE with vocabulary size {vocab_size}...")
-    bpe.fit(processed_texts[:1000])
+    bpe.fit(processed_texts)
     
     # Save the model
     bpe.save_model()

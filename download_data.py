@@ -8,7 +8,7 @@ def download_hindi_corpus():
     # Create data directory if it doesn't exist
     Path("data").mkdir(exist_ok=True)
     
-    output_file = "data/hindi_corpus.txt"
+    output_file = "data/hindi_corpus1.txt"
     
     if not os.path.exists(output_file):
         print("Creating Hindi corpus with sample text...")
